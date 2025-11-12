@@ -1,106 +1,182 @@
-# Spring Boot + MySQL Kubernetes Deployment
+# Spring Boot + MySQL Kubernetes CI/CD Deployment
 
-**Designed and Developed by: sak_shetty**
+## Project Overview
+This project demonstrates a **full CI/CD pipeline using Jenkins** for deploying a **Spring Boot application** backed by **MySQL** on a **Kubernetes cluster**. The deployment uses **kubeadm cluster** on AWS EC2, with automated kubeconfig setup for Jenkins.
 
-This project demonstrates deploying a **Spring Boot application** with a **MySQL database** on **Kubernetes**, using **Jenkins pipelines** for automation. The setup ensures that the application pod starts **only after MySQL is healthy**, and all resources can be deployed or removed with parameterized pipeline stages.
+The Spring Boot application is containerized via **Docker** and deployed on Kubernetes using **Deployment** and **Service** manifests. The CI/CD pipeline handles deployment, readiness checks, and removal of resources.
 
+### Access the application 
+- **http://CONTROL_PLANE_PUBLIC_IP:30088**
 ---
 
 ## Features
 
-* Spring Boot application containerized and hosted on DockerHub: `sakit333/webapp_dev`.
-* MySQL database deployed with Kubernetes `Deployment` and `ClusterIP` service.
-* Spring Boot service exposed via `LoadBalancer` with NodePort `30088`.
-* Namespace scoped resources: `sak-shetty-namespace`.
-* `initContainer` ensures the app starts only when MySQL is ready.
-* Jenkins pipeline with parameterized **actions** (`deploy` / `remove`) and **multi-version Spring app** boolean.
-* Fully automated deployment and cleanup of all Kubernetes resources.
-* Secrets stored securely using Kubernetes `Secret`.
+- Deploy a **Spring Boot application** from DockerHub.
+- Deploy a **MySQL 8.0 database** with secure password management via Kubernetes Secrets.
+- Fully automated **Jenkins pipeline** for deployment and removal.
+- Namespace isolation for application stack (`sak-shetty` namespace).
+- NodePort service to expose the application externally.
+- Init container to **wait for MySQL readiness** before Spring Boot startup.
+- Supports **deploy** and **remove** actions via Jenkins pipeline parameters.
+- Automatic **kubeconfig setup** for Jenkins access.
 
 ---
 
-## Prerequisites
+## Tools and Configurations
 
-* **Kubernetes cluster** with kubectl access.
-* **Jenkins server** with credentials for Kubeconfig (`kubeconfig-credentials-id`).
-* Docker image available publicly: `sakit333/webapp_dev`.
-* `kubectl` and `nc` commands available for initContainers.
+### Tools Used
+- **Jenkins**: CI/CD server  
+- **GitHub**: Version control  
+- **Docker**: Containerization of Spring Boot application  
+- **Kubernetes**: Deployment and service orchestration  
+- **kubectl**: Kubernetes CLI  
 
----
+### Manual Server Configuration
+1. **Install kubectl on Jenkins server** (if not installed):
 
-## Kubernetes Files
+   ```bash
+   sudo apt update -y
+   sudo snap install kubectl --classic
+   ```
 
-1. **namespace.yml** – Creates namespace `sak-shetty-namespace`.
-2. **db_deploy_svc.yml** – MySQL deployment + `ClusterIP` service.
-3. **app_deploy_svc.yml** – Spring Boot deployment + `LoadBalancer` service with NodePort 30088 and initContainer for MySQL readiness.
+2. **Copy kubeconfig from control plane to Jenkins server**:
 
----
+   ```bash
+   bash fetch-and-prepare-kubeconfig.sh
+   ```
 
-## Deployment
+   This script will:
 
-### Step 1: Apply Namespace
+   * Prompt for control plane IP and PEM key.
+   * Copy `kubeconfig.yaml` to `/home/jenkins/kubeconfig_for_jenkins/`.
+   * Set proper permissions.
+   * Test connectivity to Kubernetes cluster.
 
-```bash
-kubectl apply -f namespace.yml
-```
-
-### Step 2: Deploy MySQL
-
-```bash
-kubectl apply -f db_deploy_svc.yml
-```
-
-### Step 3: Deploy Spring Boot App (after MySQL is ready)
-
-```bash
-kubectl apply -f app_deploy_svc.yml
-```
-
-### Step 4: Verify Resources
-
-```bash
-kubectl get all -n sak-shetty-namespace
-```
+3. Ensure the Jenkins server can access the Kubernetes control plane on port `6443`.
 
 ---
 
-## Jenkins Pipeline
+## Project Structure
 
-* Parameterized **actions**:
-
-  * `deploy` – deploy all resources
-  * `remove` – remove all resources
-* Boolean flag to deploy multiple versions of the Spring Boot app.
-* Stages:
-
-  1. Create namespace (skip if exists)
-  2. Deploy MySQL
-  3. Deploy Spring Boot app (waits for MySQL)
-  4. Show resources
-  5. Remove Spring Boot app
-  6. Remove MySQL
-  7. Remove namespace
-  8. Show resources
+```
+k8s_prod_scripts/
+├── Jenkinsfile                  # Jenkins pipeline
+├── namespace.yml                # Kubernetes namespace definition
+├── db_deploy_svc.yml            # MySQL Deployment + Service + Secret
+├── app_deploy_svc.yml           # Spring Boot Deployment + Service
+```
 
 ---
 
-## Cleanup
+## Working Procedure
 
-Remove all deployed resources:
+1. **Prepare Kubernetes cluster**:
 
-```bash
-kubectl delete -f app_deploy_svc.yml
-kubectl delete -f db_deploy_svc.yml
-kubectl delete -f namespace.yml
-```
+   * Ensure kubeadm control plane is running.
+   * Ensure Jenkins server can connect using the PEM key.
+   * Run the kubeconfig setup script.
+
+2. **Build Docker image for Spring Boot** (done already in this project):
+
+   ```bash
+   docker build -t sakit333/webapp_dev:latest .
+   ```
+
+3. **Push image to DockerHub**:
+
+   ```bash
+   docker push sakit333/webapp_dev:latest
+   ```
+
+4. **Deploy via Jenkins pipeline**:
+
+   * Go to Jenkins → New Item → Pipeline.
+   * Select **Pipeline from SCM** → GitHub repository.
+   * Set `Jenkinsfile` path: `k8s_prod_scripts/Jenkinsfile`.
+   * Run the pipeline.
+   * Choose `deploy` action.
+
+5. **Access Application**:
+
+   * Check services:
+
+     ```bash
+     kubectl get all -n sak-shetty
+     ```
+   * Access Spring Boot app externally using NodePort:
+
+     ```
+     http://<control-plane-public-ip>:30088
+     ```
+
+---
+
+## Jenkins Pipeline Details
+
+### Parameters
+
+* `ACTION`: `deploy` or `remove`
+
+### Environment Variables
+
+* `K8S_NAMESPACE`: Kubernetes namespace for the app (`sak-shetty`)
+* `APP_NAME`: Spring Boot application name
+* `DB_NAME`: MySQL database pod name
+* `APP_IMAGE`: Docker image for Spring Boot
+* `DB_IMAGE`: MySQL image
+* `APP_PORT`: Container port for Spring Boot
+* `NODE_PORT`: NodePort for external access
+* `DB_PASSWORD`: MySQL root password
+* `DB_NAME_MYSQL`: MySQL database name
+* `KUBE_PROJECT_DIR`: Path to k8s manifests
+* `KUBECONFIG`: Path to kubeconfig on Jenkins server
+
+### Pipeline Stages
+
+1. **Verify Kubernetes Access**
+
+   * Checks cluster connectivity and nodes.
+2. **Create Namespace**
+
+   * Creates namespace if not present.
+3. **Deploy MySQL**
+
+   * Deploys MySQL with Secret for password and ClusterIP service.
+4. **Wait for MySQL Ready**
+
+   * Waits until MySQL pod is fully ready.
+5. **Deploy Spring Boot App**
+
+   * Deploys Spring Boot app with init container to wait for MySQL.
+6. **Show Resources After Deployment**
+
+   * Lists all pods, deployments, and services.
+7. **Remove Spring Boot App**
+
+   * Deletes Spring Boot deployment and service.
+8. **Remove MySQL**
+
+   * Deletes MySQL deployment, service, and secret.
+9. **Remove Namespace**
+
+   * Deletes namespace.
+10. **Show Resources After Removal**
+
+    * Verifies namespace deletion.
 
 ---
 
 ## Notes
 
-* MySQL credentials are stored in a Kubernetes `Secret`. Default username: `root`, password: `password`.
-* NodePort `30088` exposes the Spring Boot app externally.
-* Application will not start until MySQL pod passes its readiness probe.
+* MySQL root password and database are stored in **base64-encoded Kubernetes Secrets**.
+* Application reads database credentials via environment variables injected from Secrets.
+* Ensure **NodePort** (`30088`) is allowed in AWS Security Groups for external access.
+* Do not modify the `Dockerfile` or `application.properties` if they are already working.
 
 ---
 
+## Author
+
+* Developed and maintained by **@sak_shetty**
+
+---
